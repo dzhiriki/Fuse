@@ -20,75 +20,17 @@
 ;(function (global) {
   'use strict'
 
-  /** @type {function(...*)} */
-  function log () {
-    console.log.apply(console, arguments)
-  }
-
   var defaultOptions = {
-    // The name of the identifier property. If specified, the returned result will be a list
-    // of the items' dentifiers, otherwise it will be a list of the items.
-    id: null,
-
-    // Indicates whether comparisons should be case sensitive.
-
-    caseSensitive: false,
-
-    // An array of values that should be included from the searcher's output. When this array
-    // contains elements, each result in the list will be of the form `{ item: ..., include1: ..., include2: ... }`.
-    // Values you can include are `score`, `matchedLocations`
-    include: [],
-
-    // Whether to sort the result list, by score
-    shouldSort: true,
-
-    // The search function to use
-    // Note that the default search function ([[Function]]) must conform to the following API:
-    //
-    //  @param pattern The pattern string to search
-    //  @param options The search option
-    //  [[Function]].constructor = function(pattern, options)
-    //
-    //  @param text: the string to search in for the pattern
-    //  @return Object in the form of:
-    //    - isMatch: boolean
-    //    - score: Int
-    //  [[Function]].prototype.search = function(text)
-    searchFn: BitapSearcher,
-
     // Default sort function
     sortFn: function (a, b) {
       return a.score - b.score
     },
 
-    // The get function to use when fetching an object's properties.
-    // The default will search nested paths *ie foo.bar.baz*
-    getFn: deepValue,
-
     // List of properties that will be searched. This also supports nested properties.
     keys: [],
 
-    // Will print to the console. Useful for debugging.
-    verbose: false,
-
-    // When true, the search algorithm will search individual words **and** the full string,
-    // computing the final score as a function of both. Note that when `tokenize` is `true`,
-    // the `threshold`, `distance`, and `location` are inconsequential for individual tokens.
-    tokenize: false,
-
-    // When true, the result set will only include records that match all tokens. Will only work
-    // if `tokenize` is also true.
-    matchAllTokens: false,
-
     // Regex used to separate words when searching. Only applicable when `tokenize` is `true`.
     tokenSeparator: / +/g,
-
-    // Minimum number of characters that must be matched before a result is considered a match
-    minMatchCharLength: 1,
-
-    // When true, the algorithm continues searching to the end of the input even if a perfect
-    // match is found before the end of the same input.
-    findAllMatches: false
   }
 
   /**
@@ -130,8 +72,6 @@
   }
 
   Fuse.prototype.search = function (pattern) {
-    if (this.options.verbose) log('\nSearch term:', pattern, '\n')
-
     this.pattern = pattern
     this.results = []
     this.resultMap = {}
@@ -149,23 +89,19 @@
   Fuse.prototype._prepareSearchers = function () {
     var options = this.options
     var pattern = this.pattern
-    var searchFn = options.searchFn
     var tokens = pattern.split(options.tokenSeparator)
     var i = 0
     var len = tokens.length
 
-    if (this.options.tokenize) {
-      this.tokenSearchers = []
-      for (; i < len; i++) {
-        this.tokenSearchers.push(new searchFn(tokens[i], options))
-      }
+    this.tokenSearchers = []
+    for (; i < len; i++) {
+      if (tokens[i].length < 2) return
+      this.tokenSearchers.push(new BitapSearcher(tokens[i], options))
     }
-    this.fullSeacher = new searchFn(pattern, options)
   }
 
   Fuse.prototype._startSearch = function () {
     var options = this.options
-    var getFn = options.getFn
     var list = this.list
     var listLen = list.length
     var keys = this.options.keys
@@ -207,7 +143,7 @@
               weight: 1
             }
           }
-          this._analyze(key, getFn(item, key, []), item, i)
+          this._analyze(key, item[key], item, i)
         }
       }
     }
@@ -220,121 +156,61 @@
     var exists = false
     var existingResult
     var averageScore
-    var finalScore
     var scoresLen
     var mainSearchResult
     var tokenSearcher
     var termScores
     var word
     var tokenSearchResult
-    var hasMatchInText
     var checkTextMatches
     var i
     var j
 
     // Check if the text can be searched
-    if (text === undefined || text === null) {
+    if (text == undefined) {
       return
     }
 
     scores = []
+    words = text.toLowerCase().split(options.tokenSeparator)
 
-    var numTextMatches = 0
+    for (i = 0; i < this.tokenSearchers.length; i++) {
+      tokenSearcher = this.tokenSearchers[i]
+      var tokenScores = [];
 
-    if (typeof text === 'string') {
-      words = text.split(options.tokenSeparator)
-
-      if (options.verbose) log('---------\nKey:', key)
-
-      if (this.options.tokenize) {
-        for (i = 0; i < this.tokenSearchers.length; i++) {
-          tokenSearcher = this.tokenSearchers[i]
-
-          if (options.verbose) log('Pattern:', tokenSearcher.pattern)
-
-          termScores = []
-          hasMatchInText = false
-
-          for (j = 0; j < words.length; j++) {
-            word = words[j]
-            tokenSearchResult = tokenSearcher.search(word)
-            var obj = {}
-            if (tokenSearchResult.isMatch) {
-              obj[word] = tokenSearchResult.score
-              exists = true
-              hasMatchInText = true
-              scores.push(tokenSearchResult.score)
-            } else {
-              obj[word] = 1
-              if (!this.options.matchAllTokens) {
-                scores.push(1)
-              }
-            }
-            termScores.push(obj)
-          }
-
-          if (hasMatchInText) {
-            numTextMatches++
-          }
-
-          if (options.verbose) log('Token scores:', termScores)
-        }
-
-        averageScore = scores[0]
-        scoresLen = scores.length
-        for (i = 1; i < scoresLen; i++) {
-          averageScore += scores[i]
-        }
-        averageScore = averageScore / scoresLen
-
-        if (options.verbose) log('Token score average:', averageScore)
-      }
-
-      mainSearchResult = this.fullSeacher.search(text)
-      if (options.verbose) log('Full text score:', mainSearchResult.score)
-
-      finalScore = mainSearchResult.score
-      if (averageScore !== undefined) {
-        finalScore = (finalScore + averageScore) / 2
-      }
-
-      if (options.verbose) log('Score average:', finalScore)
-
-      checkTextMatches = (this.options.tokenize && this.options.matchAllTokens) ? numTextMatches >= this.tokenSearchers.length : true
-
-      if (options.verbose) log('Check Matches', checkTextMatches)
-
-      // If a match is found, add the item to <rawResults>, including its score
-      if ((exists || mainSearchResult.isMatch) && checkTextMatches) {
-        // Check if the item already exists in our results
-        existingResult = this.resultMap[index]
-
-        if (existingResult) {
-          // Use the lowest score
-          // existingResult.score, bitapResult.score
-          existingResult.output.push({
-            key: key,
-            score: finalScore,
-            matchedIndices: mainSearchResult.matchedIndices
-          })
+      for (j = 0; j < words.length; j++) {
+        word = words[j];
+        if (word.length < 2) continue;
+        tokenSearchResult = tokenSearcher.search(word)
+        if (tokenSearchResult.isMatch) {
+          exists = true
+          tokenScores.push(tokenSearchResult.score)
         } else {
-          // Add it to the raw result list
-          this.resultMap[index] = {
-            item: entity,
-            output: [{
-              key: key,
-              score: finalScore,
-              matchedIndices: mainSearchResult.matchedIndices
-            }]
-          }
-
-          this.results.push(this.resultMap[index])
+          tokenScores.push(1)
         }
       }
-    } else if (isArray(text)) {
-      for (i = 0; i < text.length; i++) {
-        this._analyze(key, text[i], entity, index)
+
+      scores.push(Math.min.apply(Math, tokenScores));
+    }
+
+    averageScore = scores[0]
+    scoresLen = scores.length
+    for (i = 1; i < scoresLen; i++) {
+      averageScore += scores[i]
+    }
+    averageScore = averageScore / scoresLen
+
+    // If a match is found, add the item to <rawResults>, including its score
+    if (exists) {
+      this.resultMap[index] = {
+        item: entity,
+        output: [{
+          key: key,
+          score: averageScore,
+        }]
       }
+
+      this.results.push(this.resultMap[index])
     }
   }
 
@@ -350,8 +226,6 @@
     var results = this.results
     var bestScore
     var nScore
-
-    if (this.options.verbose) log('\n\nComputing score:\n')
 
     for (i = 0; i < results.length; i++) {
       totalScore = 0
@@ -379,134 +253,28 @@
       } else {
         results[i].score = bestScore
       }
-
-      if (this.options.verbose) log(results[i])
     }
   }
 
   Fuse.prototype._sort = function () {
-    var options = this.options
-    if (options.shouldSort) {
-      if (options.verbose) log('\n\nSorting....')
-      this.results.sort(options.sortFn)
-    }
+    this.results.sort(this.options.sortFn)
   }
 
   Fuse.prototype._format = function () {
     var options = this.options
-    var getFn = options.getFn
     var finalOutput = []
-    var item
     var i
     var len
     var results = this.results
-    var replaceValue
-    var getItemAtIndex
-    var include = options.include
-
-    if (options.verbose) log('\n\nOutput:\n\n', results)
-
-    // Helper function, here for speed-up, which replaces the item with its value,
-    // if the options specifies it,
-    replaceValue = options.id ? function (index) {
-      results[index].item = getFn(results[index].item, options.id, [])[0]
-    } : function () {}
-
-    getItemAtIndex = function (index) {
-      var record = results[index]
-      var data
-      var j
-      var output
-      var _item
-      var _result
-
-      // If `include` has values, put the item in the result
-      if (include.length > 0) {
-        data = {
-          item: record.item
-        }
-        if (include.indexOf('matches') !== -1) {
-          output = record.output
-          data.matches = []
-          for (j = 0; j < output.length; j++) {
-            _item = output[j]
-            _result = {
-              indices: _item.matchedIndices
-            }
-            if (_item.key) {
-              _result.key = _item.key
-            }
-            data.matches.push(_result)
-          }
-        }
-
-        if (include.indexOf('score') !== -1) {
-          data.score = results[index].score
-        }
-
-      } else {
-        data = record.item
-      }
-
-      return data
-    }
 
     // From the results, push into a new array only the item identifier (if specified)
     // of the entire item.  This is because we don't want to return the <results>,
     // since it contains other metadata
     for (i = 0, len = results.length; i < len; i++) {
-      replaceValue(i)
-      item = getItemAtIndex(i)
-      finalOutput.push(item)
+      finalOutput.push(results[i].item);
     }
 
     return finalOutput
-  }
-
-  // Helpers
-
-  function deepValue (obj, path, list) {
-    var firstSegment
-    var remaining
-    var dotIndex
-    var value
-    var i
-    var len
-
-    if (!path) {
-      // If there's no path left, we've gotten to the object we care about.
-      list.push(obj)
-    } else {
-      dotIndex = path.indexOf('.')
-
-      if (dotIndex !== -1) {
-        firstSegment = path.slice(0, dotIndex)
-        remaining = path.slice(dotIndex + 1)
-      } else {
-        firstSegment = path
-      }
-
-      value = obj[firstSegment]
-      if (value !== null && value !== undefined) {
-        if (!remaining && (typeof value === 'string' || typeof value === 'number')) {
-          list.push(value)
-        } else if (isArray(value)) {
-          // Search each item in the array.
-          for (i = 0, len = value.length; i < len; i++) {
-            deepValue(value[i], remaining, list)
-          }
-        } else if (remaining) {
-          // An object. Recurse further.
-          deepValue(value, remaining, list)
-        }
-      }
-    }
-
-    return list
-  }
-
-  function isArray (obj) {
-    return Object.prototype.toString.call(obj) === '[object Array]'
   }
 
   /**
@@ -535,9 +303,12 @@
     this.options.threshold = 'threshold' in options ? options.threshold : BitapSearcher.defaultOptions.threshold
     this.options.maxPatternLength = options.maxPatternLength || BitapSearcher.defaultOptions.maxPatternLength
 
-    this.pattern = options.caseSensitive ? pattern : pattern.toLowerCase()
+    this.pattern = pattern.toLowerCase()
     this.patternLen = pattern.length
 
+    this.overflow = this.patternLen > options.maxPatternLength;
+
+    this.cache = {};
     if (this.patternLen <= this.options.maxPatternLength) {
       this.matchmask = 1 << (this.patternLen - 1)
       this.patternAlphabet = this._calculatePatternAlphabet()
@@ -610,11 +381,18 @@
    * @public
    */
   BitapSearcher.prototype.search = function (text) {
+    if (!this.cache[text]) {
+      this.cache[text] = this._search(text)
+    }
+
+    return this.cache[text];
+  }
+
+  BitapSearcher.prototype._search = function (text) {
     var options = this.options
     var i
     var j
     var textLen
-    var findAllMatches
     var location
     var threshold
     var bestLoc
@@ -634,39 +412,25 @@
     var matchesLen
     var match
 
-    text = options.caseSensitive ? text : text.toLowerCase()
-
     if (this.pattern === text) {
       // Exact match
       return {
         isMatch: true,
         score: 0,
-        matchedIndices: [[0, text.length - 1]]
       }
     }
 
     // When pattern length is greater than the machine word length, just do a a regex comparison
-    if (this.patternLen > options.maxPatternLength) {
+    if (this.overflow) {
       matches = text.match(new RegExp(this.pattern.replace(options.tokenSeparator, '|')))
       isMatched = !!matches
-
-      if (isMatched) {
-        matchedIndices = []
-        for (i = 0, matchesLen = matches.length; i < matchesLen; i++) {
-          match = matches[i]
-          matchedIndices.push([text.indexOf(match), match.length - 1])
-        }
-      }
 
       return {
         isMatch: isMatched,
         // TODO: revisit this score
         score: isMatched ? 0.5 : 1,
-        matchedIndices: matchedIndices
       }
     }
-
-    findAllMatches = options.findAllMatches
 
     location = options.location
     // Set starting location at beginning text and initialize the alphabet.
@@ -715,11 +479,7 @@
       // Use the result from this iteration as the maximum for the next.
       binMax = binMid
       start = Math.max(1, location - binMid + 1)
-      if (findAllMatches) {
-        finish = textLen;
-      } else {
-        finish = Math.min(location + binMid, textLen) + this.patternLen
-      }
+      finish = Math.min(location + binMid, textLen) + this.patternLen
 
       // Initialize the bit array
       bitArr = Array(finish + 2)
@@ -769,41 +529,11 @@
       lastBitArr = bitArr
     }
 
-    matchedIndices = this._getMatchedIndices(matchMask)
-
     // Count exact matches (those with a score of 0) to be "almost" exact
     return {
       isMatch: bestLoc >= 0,
       score: score === 0 ? 0.001 : score,
-      matchedIndices: matchedIndices
     }
-  }
-
-  BitapSearcher.prototype._getMatchedIndices = function (matchMask) {
-    var matchedIndices = []
-    var start = -1
-    var end = -1
-    var i = 0
-    var match
-    var len = matchMask.length
-    for (; i < len; i++) {
-      match = matchMask[i]
-      if (match && start === -1) {
-        start = i
-      } else if (!match && start !== -1) {
-        end = i - 1
-        if ((end - start) + 1 >= this.options.minMatchCharLength) {
-            matchedIndices.push([start, end])
-        }
-        start = -1
-      }
-    }
-    if (matchMask[i - 1]) {
-      if ((i-1 - start) + 1 >= this.options.minMatchCharLength) {
-        matchedIndices.push([start, i - 1])
-      }
-    }
-    return matchedIndices
   }
 
   // Export to Common JS Loader
