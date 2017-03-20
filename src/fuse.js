@@ -412,7 +412,7 @@
     var matchesLen
     var match
 
-    if (this.pattern === text) {
+    if (this.pattern === text || text.indexOf(this.pattern) === 0) {
       // Exact match
       return {
         isMatch: true,
