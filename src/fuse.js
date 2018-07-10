@@ -95,7 +95,7 @@
 
     this.tokenSearchers = []
     for (; i < len; i++) {
-      if (tokens[i].length < 2) return
+      if (tokens[i].length < 2) continue
       this.tokenSearchers.push(new BitapSearcher(tokens[i], options))
     }
   }
